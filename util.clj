@@ -1,6 +1,8 @@
 (ns eu.philjordan.util (:refer-clojure))
 
-(defn assoc-pushvec [map k v]
+(defn assoc-pushvec
+	"pushes v onto the end of the vector associated with k in map, or associates [v] with k if not already in map."
+	[map k v]
 	(assoc map k
 		(if (contains? map k)
 			(let [cv (map k)] ; current val
@@ -93,12 +95,14 @@
 		s1))
 
 (defn map-invert [map]
+	"reverses the key-value mapping in map, i.e. { 1 'A  2 'B } becomes { 'A 1  'B }. Duplicates are silently dropped in no particular order."
 	(reduce
 		(fn [m [k v]]
 			(assoc m v k))
 		{}
 		map))
 (defn vec-invert [v]
+	"inverts the index->value mapping of the vector to a value->index hashmap. [\"a\" \"b\" \"c\"] becomes {\"c\" 2, \"b\" 1, \"a\" 0}"
 	(map-invert
 		(map #(vector %2 %1)
 			v
@@ -111,17 +115,22 @@
 		{}
 		map))
 
-(defn pairs [seq]
+(defn pairs
+	"returns a list of 2-vectors containing all pairs of neighbours in seq. '(1 2 3 4 5) -> ([1 2] [2 3] [3 4] [4 5])"
+	[seq]
 	(map
 		vector
 		seq
 		(rest seq)))
 
 (defn every-pair?
+	"Returns true if pred is logical true for every pair of neighbours in seq."
 	[pred seq]
 	(every? (fn [[a b]](pred a b)) (pairs seq)))
 
-(defn cluster-seq [clen s]
+(defn cluster-seq
+	"Split the seq s into a lazy seq of lists with length clen."
+	[clen s]
 	(when-not (empty? s)
 		(lazy-seq
 			(let [[cl rem] (split-at clen s)]
@@ -140,7 +149,9 @@
 	(let [vcp (if (= idx (dec (count v))) v (assoc v idx (last v)))]
 		(pop vcp)))
 
-(defn choose-random-items [coll n]
+(defn choose-random-items
+	"Randomly choose n items from coll with no duplicates."
+	[coll n]
 	(first
 		(reduce
 			(fn [[dest src] i]
@@ -149,24 +160,31 @@
 					 (vector-remove-nopreserve src idx)]))
 			[() (vec coll)] (range n))))
 
-(def mapvec (comp vec map))
+(def #^{:doc "Like map, but produces a vector."}
+	mapvec (comp vec map))
 
-(defn max-by [cmp coll]
+(defn max-by
+	"Find the largest element in coll using cmp for comparing elements."
+	[cmp coll]
 	(reduce
 		#(if (neg? (cmp %1 %2)) %2 %1)
 		coll))
 
 (defn str-to-int
+	"Converts a string to an integer value. The second argument, if present, is returned if the string does not represent an integer."
 	([s]
 		(new java.math.BigInteger s))
 	([s onerr]
 		(try (str-to-int s)
 			(catch NumberFormatException e onerr))))
 
-(defn repeat-str [rep-sc num]
+(defn repeat-str
+	"Concatenate num repetitions of rep-sc."
+	[rep-sc num]
 	(apply str (map (constantly rep-sc) (range 0 num))))
 
 (defn bytearray-to-hex
+	"Returns a string of hex digits representing the given byte array. The string will always contain 2 digits for every byte, including any necessary leading zeroes."
 	[byte-array]
 	(let
 		[hex (. (new BigInteger 1 byte-array) (toString 16))
@@ -175,7 +193,9 @@
 			hex
 			(str (repeat-str "0" delta-len) hex))))
 
-(defn assoc-when [map & kvs]
+(defn assoc-when
+	"In the given map, associate each key with its corresponding val, but only if the value is truthy."
+	[map & kvs]
 	(reduce
 		(fn [m [k v]]
 			(if v
@@ -188,10 +208,12 @@
 	[pred coll & args]
 	(filter #(apply pred % args) coll))
 
-(defn prrn [x]
+(defn prrn "Like prn, but accepts only one argument and returns it after printing." [x]
 	(prn x)
 	x)
 	
 
-(defn str-starts-with? [s prefix]
+(defn str-starts-with?
+	"Determines whether the string s starts with prefix."
+	[s prefix]
 	(. s (startsWith prefix)))
