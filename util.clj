@@ -1,4 +1,52 @@
-(ns eu.philjordan.util (:refer-clojure))
+(ns eu.philjordan.util
+	(:require
+		[clojure.contrib.str-utils :as str-utils]))
+
+(defn camelcase-dashed "Capitalise the first letter of the given string and turn any dashes into CamelCase.\ne.g. \"camel-case\" -> \"CamelCase\""
+	([s]
+		(str-utils/re-gsub
+			#"(?:^|-)(\p{Alpha})"
+			(fn [[_ c]]
+				(.toUpperCase c)) s)))
+
+; look up java primitive type from boxed type
+(def boxed->primitive
+	{
+		Boolean Boolean/TYPE,
+		Character Character/TYPE,
+		Byte Byte/TYPE,
+		Short Short/TYPE,
+		Integer Integer/TYPE,
+		Long Long/TYPE,
+		Float Float/TYPE,
+		Double Double/TYPE,
+		Void Void/TYPE
+	})
+
+(defn to-primitive-class "If the given class is of boxed type, return its unboxed primitive counterpart. Otherwise, returns the class itself."
+	[c]
+	(get boxed->primitive c c))
+
+(defn call-method-on "Very simple wrapper for runtime method calling reflection. Unboxes any boxed arguments first, which is undesireable when the method accepts boxed types. No optimisation attempt is made, so use it sparingly."
+	[obj method-name & args]
+	(let
+		[method 
+			(.getMethod (class obj)
+				(name method-name)
+				(into-array java.lang.Class (map (comp to-primitive-class class) args)))]
+		(.invoke method
+			obj (to-array args))))
+
+(defn set-bean-properties "Calls java bean style setters on the object for each property in the given property map. Uses camelcase-dashed to generate setter name.\ne.g.\n(set-bean-properties obj { :server-name \"localhost\" })\nis equivalent to\n(.setServerName obj \"localhost\")"
+	[obj props]
+	(dorun
+		(map
+			(fn [[prop val]]
+				(let [setter (symbol (str "set" (camelcase-dashed (name prop))))]
+					(call-method-on obj setter val)))
+			props))
+	obj)
+
 
 (defn assoc-pushvec
 	"pushes v onto the end of the vector associated with k in map, or associates [v] with k if not already in map."
@@ -140,8 +188,14 @@
 				
 
 (defonce *rng* (new java.security.SecureRandom))
-(defn random-int [ubound]
-	(. *rng* (nextInt ubound)))
+(defn random-int
+	([ubound]
+		(. *rng* (nextInt ubound)))
+	([]
+		(. *rng* (nextInt))))
+(defn random-long
+	([]
+		(. *rng* (nextLong))))
 
 (defn vector-remove-nopreserve
 	"remove element idx from vector v, move the last element to fill the gap."
@@ -169,6 +223,33 @@
 	(reduce
 		#(if (neg? (cmp %1 %2)) %2 %1)
 		coll))
+
+(defn max* "version of max that allows nil (which is never the max)"
+	([] nil)
+	([a] a)
+	([a b]
+		(cond
+			(not a) b
+			(not b) a
+			:else (max a b)))
+	([a b & more]
+		(if-let [m (max* a b)]
+			(apply max* m more)
+			(apply max* more))))
+
+(defn min* "Version of min that allows nil (which is never the min)"
+	([] nil)
+	([a] a)
+	([a b]
+		(cond
+			(not a) b
+			(not b) a
+			:else (min a b)))
+	([a b & more]
+		(if-let [m (min* a b)]
+			(apply min* m more)
+			(apply min* more))))
+
 
 (defn str-to-int
 	"Converts a string to an integer value. The second argument, if present, is returned if the string does not represent an integer."
@@ -202,7 +283,7 @@
 				(assoc m k v)
 				m))
 		map
-		(cluster-seq 2 kvs)))
+		(partition 2 kvs)))
 
 (defn filter* "like filter, but accepts extra arguments to the predicate"
 	[pred coll & args]
@@ -217,3 +298,73 @@
 	"Determines whether the string s starts with prefix."
 	[s prefix]
 	(. s (startsWith prefix)))
+
+
+(defn updates-in "Applies a sequence of updates to the map, where each update is a seq of arguments to update-in"
+	[m & updates]
+	(reduce
+		(fn [m u]
+			(apply update-in m u))
+		m
+		updates))
+
+(def *invalidate-memo*)
+
+(defn memoize*
+	"Like clojure.core/memoize, but the returned function's metadata contains an :invalidate function which completely resets the memory in the 0-ary form, or accepts the argument sequence for which to invalidate as its only argument."
+	[f]
+	(let
+		[memo (atom {})
+		 inv (fn memo-invalidate
+			; invalidate all
+			([]
+				(reset! memo {}))
+			; selective invalidation
+			([args]
+				(swap! memo dissoc (seq args))))]
+		(with-meta
+			(fn memoized [& args]
+				(binding [*invalidate-memo* inv]
+					(if-let [e (find @memo args)]
+						(val e)
+						(let [ret (apply f args)]
+							(swap! memo assoc args ret)
+							ret))))
+			{:invalidate
+				inv})))
+
+(defmacro gather-when "For each cond returning logical true, evaluates the corresponding expr and calls f with val and  the result, returning the new val. All cond-fns are called, regardless of the results of previous cond-fn calls. Returns the final val."
+	[val f & cond-expr-fns]
+	(let [val-sym (gensym "val")]
+		(list 'let
+			(vec
+				(list* val-sym val
+					(mapcat
+						(fn [[cond expr]]
+							`(~val-sym (if ~cond (~f ~val-sym ~expr) ~val-sym)))
+						(partition 2 cond-expr-fns))))
+			val-sym)))
+
+(defn http-request-hops [req]
+	(lazy-cat
+		(when-let [xff (get-in req [:headers "x-forwarded-for"])]
+			(seq (. xff (split "\\s*,\\s*"))))
+		(when-let [addr (:remote-addr req)]
+			(list addr))))
+
+(defn http-request-real-client [req]
+	(or
+		(get-in req [:headers "x-real-ip"])
+		(first (http-request-hops req))))
+
+(defmacro let-string-keyed "generates a destructuring let form for mapping symbols to string-keyed values of the same name in a map."
+	[[[& symbols] map-expr] & body]
+	(list* 'let
+		(vector
+			(reduce
+				(fn [m sym]
+					(assoc m sym (name sym)))
+				{}
+				symbols)
+			map-expr)
+		body))

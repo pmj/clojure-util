@@ -1,5 +1,8 @@
 (ns eu.philjordan.util.datetime (:refer-clojure))
 
+(defn now []
+	(new java.util.Date))
+
 (defn get-future-years "returns a java.util.Date that is delta-years in the future. -ve years -> past"
 	([delta-years date]
 		(let
